@@ -275,7 +275,7 @@ async function sendEmail(data: ApplicationData, task: GeneratedTask): Promise<vo
   const pdfFilename = `Sensussoft_Task_${data.name.replace(/\s+/g, "_")}.pdf`;
 
   // Build attachments — always include the generated task PDF
-  const attachments: nodemailer.Attachment[] = [
+  const attachments: { filename: string; content: Buffer; contentType: string }[] = [
     {
       filename: pdfFilename,
       content: pdfBuffer,
