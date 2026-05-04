@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import nodemailer from "nodemailer";
+import PDFDocument from "pdfkit";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 interface ApplicationData {
@@ -65,32 +66,148 @@ Return ONLY valid JSON with these exact keys:
 
 No markdown, no code fences, just raw JSON.`;
 
+  const MAX_RETRIES = 3;
+  const RETRY_DELAY_MS = 2000;
   for (const modelName of modelsToTry) {
-    try {
-      const model = genAI.getGenerativeModel({ model: modelName });
-      const result = await model.generateContent(prompt);
-      let text = result.response.text();
+    let attempt = 0;
+    while (attempt < MAX_RETRIES) {
+      try {
+        const model = genAI.getGenerativeModel({ model: modelName });
+        const result = await model.generateContent(prompt);
+        let text = result.response.text();
 
-      // Strip markdown code fences if AI wraps JSON
-      text = text.replace(/```json|```/g, "").trim();
+        // Strip markdown code fences if AI wraps JSON
+        text = text.replace(/```json|```/g, "").trim();
 
-      const parsed: GeneratedTask = JSON.parse(text);
-      console.log(`✅ Task generated with model: ${modelName}`);
-      return parsed;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes("429") || msg.includes("404") || msg.includes("not found") || msg.includes("quota")) {
-        console.log(`⚠️ Model ${modelName} failed, trying next...`);
-        continue;
+        const parsed: GeneratedTask = JSON.parse(text);
+        console.log(`✅ Task generated with model: ${modelName}`);
+        return parsed;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (
+          msg.includes("429") ||
+          msg.includes("404") ||
+          msg.includes("not found") ||
+          msg.includes("quota") ||
+          msg.includes("503") ||
+          msg.includes("high demand") ||
+          msg.includes("temporarily")
+        ) {
+          attempt++;
+          if (attempt < MAX_RETRIES) {
+            console.log(`⚠️ Model ${modelName} failed (attempt ${attempt}), retrying in ${RETRY_DELAY_MS}ms...`);
+            await new Promise((res) => setTimeout(res, RETRY_DELAY_MS));
+            continue;
+          } else {
+            console.log(`⚠️ Model ${modelName} failed after ${MAX_RETRIES} attempts, trying next...`);
+            break;
+          }
+        }
+        throw err;
       }
-      throw err;
     }
   }
 
   throw new Error("All Gemini models failed. Please check your API key quota at aistudio.google.com");
 }
 
-// ── Build HTML email ───────────────────────────────────────────────────────
+// ── PDFKit: Generate PDF buffer ────────────────────────────────────────────
+async function generatePDF(data: ApplicationData, task: GeneratedTask): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 50, size: "A4" });
+    const chunks: Buffer[] = [];
+
+    doc.on("data", (chunk: Buffer) => chunks.push(chunk));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+
+    // ── Header ──
+    doc.rect(0, 0, doc.page.width, 80).fill("#1F4E79");
+    doc.fillColor("white").fontSize(22).font("Times-Bold")
+      .text("Sensussoft — Practical Task", 50, 25);
+    doc.fontSize(11).font("Times-Roman")
+      .text("AI-Generated Candidate Assessment", 50, 52);
+
+    doc.moveDown(3);
+
+    // ── Candidate Info ──
+    doc.fillColor("#1F4E79").fontSize(14).font("Times-Bold")
+      .text("Candidate Details");
+    doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor("#2E75B6").lineWidth(1).stroke();
+    doc.moveDown(0.5);
+
+    doc.fillColor("#333").fontSize(11).font("Times-Roman");
+    doc.text(`Name:        ${data.name}`);
+    doc.text(`Email:       ${data.email}`);
+    doc.text(`Role:        ${data.role}`);
+    doc.text(`Experience:  ${data.experience}`);
+    doc.text(`Skills:      ${data.skills}`);
+    doc.moveDown(1.5);
+
+    // ── Difficulty Badge ──
+    const diffColor = task.difficulty === "Senior" ? "#c0392b" :
+      task.difficulty === "Mid-level" ? "#e67e22" : "#27ae60";
+    doc.roundedRect(50, doc.y, 100, 22, 5).fill(diffColor);
+    doc.fillColor("white").fontSize(10).font("Times-Bold")
+      .text(task.difficulty, 50, doc.y - 17, { width: 100, align: "center" });
+    doc.moveDown(1.5);
+
+    // ── Task Title ──
+    doc.fillColor("#1F4E79").fontSize(16).font("Times-Bold")
+      .text(task.title);
+    doc.moveDown(0.5);
+
+    // ── Scenario ──
+    doc.fillColor("#555").fontSize(11).font("Times-Roman")
+      .text(task.scenario, { lineGap: 4 });
+    doc.moveDown(1.5);
+
+    // ── Requirements ──
+    doc.fillColor("#1F4E79").fontSize(13).font("Times-Bold").text("Requirements");
+    doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor("#2E75B6").lineWidth(0.5).stroke();
+    doc.moveDown(0.5);
+    doc.fillColor("#333").fontSize(11).font("Times-Roman");
+    task.requirements.forEach((req, i) => {
+      doc.text(`${i + 1}.  ${req}`, { lineGap: 3 });
+    });
+    doc.moveDown(1.5);
+
+    // ── Deliverables ──
+    doc.fillColor("#1F4E79").fontSize(13).font("Times-Bold").text("Deliverables");
+    doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor("#2E75B6").lineWidth(0.5).stroke();
+    doc.moveDown(0.5);
+    doc.fillColor("#333").fontSize(11).font("Times-Roman");
+    task.deliverables.forEach((d) => {
+      doc.text(`•  ${d}`, { lineGap: 3 });
+    });
+    doc.moveDown(1.5);
+
+    // ── Evaluation Criteria ──
+    doc.fillColor("#1F4E79").fontSize(13).font("Times-Bold").text("Evaluation Criteria");
+    doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor("#2E75B6").lineWidth(0.5).stroke();
+    doc.moveDown(0.5);
+    doc.fillColor("#333").fontSize(11).font("Times-Roman");
+    task.evaluation_criteria.forEach((c) => {
+      doc.text(`✓  ${c}`, { lineGap: 3 });
+    });
+    doc.moveDown(1.5);
+
+    // ── Deadline ──
+    doc.rect(50, doc.y, 495, 36).fill("#EBF3FB");
+    doc.fillColor("#1F4E79").fontSize(12).font("Times-Bold")
+      .text(`Deadline: ${task.deadline_days} days from receipt of this email`, 60, doc.y - 26);
+    doc.moveDown(2);
+
+    // ── Footer ──
+    doc.fillColor("#999").fontSize(9).font("Times-Roman")
+      .text("This task was AI-generated by Sensussoft Hiring System based on the candidate's profile.",
+        50, doc.page.height - 50, { align: "center" });
+
+    doc.end();
+  });
+}
+
+
 function renderEmail(data: ApplicationData, task: GeneratedTask): string {
   const list = (arr: string[]) =>
     arr.map((x) => `<li style="margin:6px 0">${x}</li>`).join("");
@@ -139,7 +256,7 @@ function renderEmail(data: ApplicationData, task: GeneratedTask): string {
   `;
 }
 
-// ── Nodemailer: Send email ─────────────────────────────────────────────────
+// ── Nodemailer: Send email with PDF attachment ─────────────────────────────
 async function sendEmail(data: ApplicationData, task: GeneratedTask): Promise<void> {
   const transporter = nodemailer.createTransport({
     service: "gmail",
@@ -149,12 +266,24 @@ async function sendEmail(data: ApplicationData, task: GeneratedTask): Promise<vo
     },
   });
 
+  // Generate PDF
+  console.log("📄 Generating PDF...");
+  const pdfBuffer = await generatePDF(data, task);
+  const pdfFilename = `Sensussoft_Task_${data.name.replace(/\s+/g, "_")}.pdf`;
+
   await transporter.sendMail({
     from: `"Sensussoft Careers" <${process.env.GMAIL_USER}>`,
     to: data.email,
     subject: `Sensussoft — Practical Task for ${data.role}`,
     html: renderEmail(data, task),
     text: `Hi ${data.name},\n\nTask: ${task.title}\n\nScenario: ${task.scenario}\n\nRequirements:\n${task.requirements.join("\n")}\n\nDeadline: ${task.deadline_days} days\n\nGood luck!\nSensussoft Hiring Team`,
+    attachments: [
+      {
+        filename: pdfFilename,
+        content: pdfBuffer,
+        contentType: "application/pdf",
+      },
+    ],
   });
 }
 
@@ -204,8 +333,15 @@ export async function POST(req: NextRequest) {
     });
 
   } catch (error: unknown) {
+    let errorMessage = "Internal server error";
+    let errorStack = undefined;
+    if (error instanceof Error) {
+      errorMessage = error.message;
+      errorStack = error.stack;
+    } else if (typeof error === "string") {
+      errorMessage = error;
+    }
     console.error("❌ Error:", error);
-    const errorMessage = error instanceof Error ? error.message : "Internal server error";
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
+    return NextResponse.json({ error: errorMessage, stack: errorStack }, { status: 500 });
   }
 }

@@ -25,7 +25,10 @@ export default function Home() {
     try {
       const res = await fetch("/api/submit", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-webhook-secret": "demo-secret-do-not-change",
+        },
         body: JSON.stringify(formData),
       });
 
