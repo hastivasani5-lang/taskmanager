@@ -175,6 +175,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Optional webhook secret check (if WEBHOOK_SECRET is set in env)
+    if (process.env.WEBHOOK_SECRET) {
+      const secret = req.headers.get("x-webhook-secret");
+      if (secret !== process.env.WEBHOOK_SECRET) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      }
+    }
+
     console.log(`\n=== New candidate received ===`);
     console.log(`Name: ${name}`);
     console.log(`Role: ${role}`);
