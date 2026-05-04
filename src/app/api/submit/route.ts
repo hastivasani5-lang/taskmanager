@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import nodemailer from "nodemailer";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -10,9 +11,17 @@ interface ApplicationData {
   skills: string;
 }
 
-// ── Ollama: Generate custom task ───────────────────────────────────────────
+// ── Gemini: Generate custom task ───────────────────────────────────────────
 async function generateTask(data: ApplicationData): Promise<string> {
-  const prompt = `You are a technical hiring manager. A candidate has applied for a job.
+  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+  
+  // Try models in order until one works
+  const modelsToTry = ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-2.5-flash"];
+  
+  for (const modelName of modelsToTry) {
+    try {
+      const model = genAI.getGenerativeModel({ model: modelName });
+      const prompt = `You are a technical hiring manager. A candidate has applied for a job.
 Based on their profile, create a CUSTOM coding task that matches their exact level.
 
 Candidate Profile:
@@ -51,22 +60,20 @@ EVALUATION CRITERIA:
 
 Make it specific to their skills (${data.skills}) and role (${data.role}).`;
 
-  const response = await fetch("http://localhost:11434/api/generate", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "llama3.2",
-      prompt: prompt,
-      stream: false,
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Ollama error: ${response.status} ${response.statusText}`);
+      const result = await model.generateContent(prompt);
+      return result.response.text();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // If quota or not found, try next model
+      if (msg.includes("429") || msg.includes("404") || msg.includes("not found")) {
+        console.log(`Model ${modelName} failed, trying next...`);
+        continue;
+      }
+      throw err;
+    }
   }
-
-  const result = await response.json();
-  return result.response;
+  
+  throw new Error("All Gemini models failed. Please check your API key quota at aistudio.google.com");
 }
 
 // ── Nodemailer: Send email ─────────────────────────────────────────────────
@@ -127,9 +134,9 @@ export async function POST(req: NextRequest) {
     }
 
     // Check env variables
-    if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
+    if (!process.env.GEMINI_API_KEY || !process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
       return NextResponse.json(
-        { error: "Server configuration missing. Check .env.local file." },
+        { error: "Server configuration missing. Check environment variables." },
         { status: 500 }
       );
     }
