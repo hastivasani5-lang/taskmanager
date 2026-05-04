@@ -10,6 +10,9 @@ interface ApplicationData {
   role: string;
   experience: string;
   skills: string;
+  resumeBuffer?: Buffer;
+  resumeFilename?: string;
+  resumeMimeType?: string;
 }
 
 interface GeneratedTask {
@@ -271,28 +274,66 @@ async function sendEmail(data: ApplicationData, task: GeneratedTask): Promise<vo
   const pdfBuffer = await generatePDF(data, task);
   const pdfFilename = `Sensussoft_Task_${data.name.replace(/\s+/g, "_")}.pdf`;
 
+  // Build attachments — always include the generated task PDF
+  const attachments: nodemailer.Attachment[] = [
+    {
+      filename: pdfFilename,
+      content: pdfBuffer,
+      contentType: "application/pdf",
+    },
+  ];
+
+  // Also attach the candidate's resume if provided
+  if (data.resumeBuffer && data.resumeFilename) {
+    attachments.push({
+      filename: data.resumeFilename,
+      content: data.resumeBuffer,
+      contentType: data.resumeMimeType || "application/octet-stream",
+    });
+  }
+
   await transporter.sendMail({
     from: `"Sensussoft Careers" <${process.env.GMAIL_USER}>`,
     to: data.email,
     subject: `Sensussoft — Practical Task for ${data.role}`,
     html: renderEmail(data, task),
     text: `Hi ${data.name},\n\nTask: ${task.title}\n\nScenario: ${task.scenario}\n\nRequirements:\n${task.requirements.join("\n")}\n\nDeadline: ${task.deadline_days} days\n\nGood luck!\nSensussoft Hiring Team`,
-    attachments: [
-      {
-        filename: pdfFilename,
-        content: pdfBuffer,
-        contentType: "application/pdf",
-      },
-    ],
+    attachments,
   });
 }
 
 // ── Main API Handler ───────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   try {
-    const body: ApplicationData = await req.json();
+    // Parse multipart/form-data (resume upload) or fall back to JSON
+    let name: string, email: string, role: string, experience: string, skills: string;
+    let resumeBuffer: Buffer | undefined;
+    let resumeFilename: string | undefined;
+    let resumeMimeType: string | undefined;
 
-    const { name, email, role, experience, skills } = body;
+    const contentType = req.headers.get("content-type") || "";
+
+    if (contentType.includes("multipart/form-data")) {
+      const formData = await req.formData();
+      name       = (formData.get("name")       as string) || "";
+      email      = (formData.get("email")      as string) || "";
+      role       = (formData.get("role")       as string) || "";
+      experience = (formData.get("experience") as string) || "";
+      skills     = (formData.get("skills")     as string) || "";
+
+      const resumeEntry = formData.get("resume");
+      if (resumeEntry && typeof resumeEntry !== "string") {
+        const file = resumeEntry as File;
+        const arrayBuffer = await file.arrayBuffer();
+        resumeBuffer   = Buffer.from(arrayBuffer);
+        resumeFilename = file.name;
+        resumeMimeType = file.type;
+      }
+    } else {
+      const body: ApplicationData = await req.json();
+      ({ name, email, role, experience, skills } = body);
+    }
+
     if (!name || !email || !role || !experience || !skills) {
       return NextResponse.json({ error: "All fields are required" }, { status: 400 });
     }
@@ -312,18 +353,24 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    const applicationData: ApplicationData = {
+      name, email, role, experience, skills,
+      resumeBuffer, resumeFilename, resumeMimeType,
+    };
+
     console.log(`\n=== New candidate received ===`);
     console.log(`Name: ${name}`);
     console.log(`Role: ${role}`);
     console.log(`Experience: ${experience}`);
     console.log(`Skills: ${skills}`);
+    console.log(`Resume: ${resumeFilename ?? "not provided"}`);
 
     console.log("🤖 Asking Gemini to generate a task...");
-    const task = await generateTask(body);
+    const task = await generateTask(applicationData);
     console.log("Task generated:", task.title);
 
     console.log(`📧 Sending email to ${email}...`);
-    await sendEmail(body, task);
+    await sendEmail(applicationData, task);
     console.log("✅ Email sent successfully.");
 
     return NextResponse.json({
