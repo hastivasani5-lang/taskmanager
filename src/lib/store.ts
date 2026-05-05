@@ -12,6 +12,9 @@ export interface Submission {
   taskTitle?: string;
   submittedAt: string; // ISO string
   status: "pending" | "reviewed" | "rejected";
+  githubRepo?: string; // GitHub repo URL for tracking
+  taskProgress?: number; // 0-100 percentage
+  lastUpdated?: string; // Last progress update timestamp
 }
 
 // Global store — survives hot reloads in dev via globalThis
@@ -44,6 +47,14 @@ export const store = {
     const idx = list.findIndex((s) => s.id === id);
     if (idx === -1) return false;
     list[idx] = { ...list[idx], status };
+    return true;
+  },
+
+  updateProgress(email: string, progress: number): boolean {
+    const list = globalStore.submissions ?? [];
+    const idx = list.findIndex((s) => s.email === email);
+    if (idx === -1) return false;
+    list[idx] = { ...list[idx], taskProgress: progress, lastUpdated: new Date().toISOString() };
     return true;
   },
 
