@@ -107,7 +107,7 @@ async function generatePDF(data: ApplicationData, task: GeneratedTask): Promise<
     doc.on("error", reject);
 
     // ── Header ──
-    doc.rect(0, 0, doc.page.width, 80).fill("#1F4E79");
+    doc.rect(0, 0, doc.page.width, 80).fill("#831843");
     doc.fillColor("white").fontSize(22).font("Times-Bold")
       .text("Sensussoft — Practical Task", 50, 25);
     doc.fontSize(11).font("Times-Roman")
@@ -116,9 +116,9 @@ async function generatePDF(data: ApplicationData, task: GeneratedTask): Promise<
     doc.moveDown(3);
 
     // ── Candidate Info ──
-    doc.fillColor("#1F4E79").fontSize(14).font("Times-Bold")
+    doc.fillColor("#831843").fontSize(14).font("Times-Bold")
       .text("Candidate Details");
-    doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor("#2E75B6").lineWidth(1).stroke();
+    doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor("#be185d").lineWidth(1).stroke();
     doc.moveDown(0.5);
 
     doc.fillColor("#333").fontSize(11).font("Times-Roman");
@@ -138,7 +138,7 @@ async function generatePDF(data: ApplicationData, task: GeneratedTask): Promise<
     doc.moveDown(1.5);
 
     // ── Task Title ──
-    doc.fillColor("#1F4E79").fontSize(16).font("Times-Bold")
+    doc.fillColor("#831843").fontSize(16).font("Times-Bold")
       .text(task.title);
     doc.moveDown(0.5);
 
@@ -148,8 +148,8 @@ async function generatePDF(data: ApplicationData, task: GeneratedTask): Promise<
     doc.moveDown(1.5);
 
     // ── Requirements ──
-    doc.fillColor("#1F4E79").fontSize(13).font("Times-Bold").text("Requirements");
-    doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor("#2E75B6").lineWidth(0.5).stroke();
+    doc.fillColor("#831843").fontSize(13).font("Times-Bold").text("Requirements");
+    doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor("#be185d").lineWidth(0.5).stroke();
     doc.moveDown(0.5);
     doc.fillColor("#333").fontSize(11).font("Times-Roman");
     task.requirements.forEach((req, i) => {
@@ -158,8 +158,8 @@ async function generatePDF(data: ApplicationData, task: GeneratedTask): Promise<
     doc.moveDown(1.5);
 
     // ── Deliverables ──
-    doc.fillColor("#1F4E79").fontSize(13).font("Times-Bold").text("Deliverables");
-    doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor("#2E75B6").lineWidth(0.5).stroke();
+    doc.fillColor("#831843").fontSize(13).font("Times-Bold").text("Deliverables");
+    doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor("#be185d").lineWidth(0.5).stroke();
     doc.moveDown(0.5);
     doc.fillColor("#333").fontSize(11).font("Times-Roman");
     task.deliverables.forEach((d) => {
@@ -168,8 +168,8 @@ async function generatePDF(data: ApplicationData, task: GeneratedTask): Promise<
     doc.moveDown(1.5);
 
     // ── Evaluation Criteria ──
-    doc.fillColor("#1F4E79").fontSize(13).font("Times-Bold").text("Evaluation Criteria");
-    doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor("#2E75B6").lineWidth(0.5).stroke();
+    doc.fillColor("#831843").fontSize(13).font("Times-Bold").text("Evaluation Criteria");
+    doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor("#be185d").lineWidth(0.5).stroke();
     doc.moveDown(0.5);
     doc.fillColor("#333").fontSize(11).font("Times-Roman");
     task.evaluation_criteria.forEach((c) => {
@@ -178,8 +178,8 @@ async function generatePDF(data: ApplicationData, task: GeneratedTask): Promise<
     doc.moveDown(1.5);
 
     // ── Deadline ──
-    doc.rect(50, doc.y, 495, 36).fill("#EBF3FB");
-    doc.fillColor("#1F4E79").fontSize(12).font("Times-Bold")
+    doc.rect(50, doc.y, 495, 36).fill("#fff0f6");
+    doc.fillColor("#831843").fontSize(12).font("Times-Bold")
       .text(`Deadline: ${task.deadline_days} days from receipt of this email`, 60, doc.y - 26);
     doc.moveDown(2);
 
@@ -194,69 +194,178 @@ async function generatePDF(data: ApplicationData, task: GeneratedTask): Promise<
 
 
 function renderEmail(data: ApplicationData, task: GeneratedTask): string {
-  const list = (arr: string[]) =>
-    arr.map((x) => `<li style="margin:6px 0">${x}</li>`).join("");
+  const year = new Date().getFullYear();
 
-  const difficultyColor =
-    task.difficulty === "Senior" ? "#c0392b" :
-    task.difficulty === "Mid-level" ? "#e67e22" : "#27ae60";
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>Your Task — Sensussoft</title>
+</head>
+<body style="margin:0;padding:0;background:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,sans-serif;">
 
-  return `
-    <div style="font-family:Arial,sans-serif;max-width:640px;color:#333;margin:0 auto;">
-      <div style="background:linear-gradient(135deg,#1F4E79,#2E75B6);padding:30px;border-radius:12px 12px 0 0;text-align:center;">
-        <h1 style="color:white;margin:0;font-size:26px;">🎯 Your Practical Task</h1>
-        <p style="color:rgba(255,255,255,0.85);margin:8px 0 0 0;">Sensussoft Hiring Team</p>
-      </div>
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:48px 16px;">
+    <tr><td align="center">
+      <table width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;">
 
-      <div style="background:#f8f9fa;padding:28px;border-radius:0 0 12px 12px;border:1px solid #e9ecef;">
-        <h2 style="color:#1F4E79;margin-top:0;">Hi ${data.name},</h2>
-        <p>Thanks for applying to <b>Sensussoft</b> for the <b>${data.role}</b> role.
-        Below is a short practical task. Please complete it within
-        <b>${task.deadline_days} days</b> and reply to this email with your submission.</p>
+        <!-- Logo -->
+        <tr>
+          <td style="padding-bottom:28px;text-align:center;">
+            <table cellpadding="0" cellspacing="0" align="center">
+              <tr>
+                <td style="background:#db2777;width:36px;height:36px;border-radius:10px;text-align:center;vertical-align:middle;">
+                  <span style="color:white;font-weight:800;font-size:18px;line-height:36px;display:block;">S</span>
+                </td>
+                <td style="padding-left:10px;font-size:20px;font-weight:700;color:#18181b;vertical-align:middle;letter-spacing:-0.3px;">
+                  Sensussoft
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
 
-        <div style="background:white;border-radius:8px;padding:20px;margin:20px 0;border:1px solid #dee2e6;">
-          <h3 style="color:#2E75B6;margin-top:0;">${task.title}</h3>
-          <span style="background:${difficultyColor};color:white;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:bold;">
-            ${task.difficulty}
-          </span>
-          <p style="margin-top:14px;">${task.scenario}</p>
+        <!-- Card -->
+        <tr>
+          <td style="background:#ffffff;border-radius:20px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.06);">
 
-          <h4 style="color:#1F4E79;">📋 Requirements</h4>
-          <ul style="padding-left:20px;">${list(task.requirements)}</ul>
+            <!-- Top accent bar -->
+            <table width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                <td style="background:#db2777;height:5px;font-size:0;line-height:0;">&nbsp;</td>
+              </tr>
+            </table>
 
-          <h4 style="color:#1F4E79;">📦 Deliverables</h4>
-          <ul style="padding-left:20px;">${list(task.deliverables)}</ul>
+            <!-- Content -->
+            <table width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                <td style="padding:40px 44px 36px;">
 
-          <h4 style="color:#1F4E79;">✅ How we will evaluate</h4>
-          <ul style="padding-left:20px;">${list(task.evaluation_criteria)}</ul>
+                  <!-- Greeting -->
+                  <h1 style="margin:0 0 8px 0;font-size:22px;font-weight:800;color:#18181b;line-height:1.3;">
+                    Hi ${data.name}, your task is attached! 👋
+                  </h1>
+                  <p style="margin:0 0 28px 0;font-size:15px;color:#71717a;line-height:1.6;">
+                    Thank you for applying to <strong style="color:#18181b;">Sensussoft</strong> for the
+                    <strong style="color:#db2777;">${data.role}</strong> position.
+                  </p>
 
-          <div style="margin-top:20px;padding:14px 18px;background:#f0f7ff;border-radius:8px;border:1px solid #c8e0f7;">
-            <h4 style="color:#1F4E79;margin:0 0 8px 0;">🔗 Task Repository</h4>
-            <p style="margin:0;font-size:13px;color:#555;">Fork or clone the repository below to get started:</p>
-            <a href="https://github.com/Aeshvivaviya/demo" 
-               style="display:inline-block;margin-top:10px;padding:8px 16px;background:#1F4E79;color:white;text-decoration:none;border-radius:6px;font-size:13px;font-weight:bold;">
-              📂 github.com/Aeshvivaviya/demo
-            </a>
-          </div>
+                  <!-- Divider -->
+                  <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
+                    <tr><td style="height:1px;background:#f4f4f5;font-size:0;">&nbsp;</td></tr>
+                  </table>
 
-          <div style="margin-top:16px;padding:14px 18px;background:#f8f9fa;border-radius:8px;border:1px solid #dee2e6;">
-            <h4 style="color:#1F4E79;margin:0 0 8px 0;">📊 Task Progress</h4>
-            <p style="margin:0 0 8px 0;font-size:13px;color:#555;">Your progress will be automatically tracked when you push code to the repository.</p>
-            <div style="background:#e9ecef;border-radius:20px;height:20px;overflow:hidden;">
-              <div style="background:linear-gradient(90deg,#1F4E79,#2E75B6);height:100%;width:0%;border-radius:20px;transition:width 0.3s;"></div>
-            </div>
-            <p style="margin:6px 0 0 0;font-size:12px;color:#888;text-align:right;">0% Complete</p>
-          </div>
-        </div>
+                  <!-- PDF notice box -->
+                  <table width="100%" cellpadding="0" cellspacing="0" style="background:#fdf2f8;border-radius:12px;border:1px solid #fce7f3;margin-bottom:28px;">
+                    <tr>
+                      <td style="padding:22px 24px;">
+                        <table cellpadding="0" cellspacing="0">
+                          <tr>
+                            <td style="vertical-align:top;padding-right:14px;font-size:24px;line-height:1;">📎</td>
+                            <td>
+                              <p style="margin:0 0 4px 0;font-size:15px;font-weight:700;color:#18181b;">
+                                Your coding task is in the PDF
+                              </p>
+                              <p style="margin:0;font-size:13px;color:#71717a;line-height:1.6;">
+                                We've attached a personalised PDF with your full task details — requirements, deliverables, and evaluation criteria.
+                                Please open the attachment to get started.
+                              </p>
+                            </td>
+                          </tr>
+                        </table>
+                      </td>
+                    </tr>
+                  </table>
 
-        <p style="color:#888;font-size:13px;margin-bottom:0;">
-          Good luck!<br/>
-          <b>Sensussoft Hiring Team</b><br/>
-          <em>This task was AI-generated based on your specific profile.</em>
-        </p>
-      </div>
-    </div>
-  `;
+                  <!-- Steps -->
+                  <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
+                    <tr>
+                      <td style="padding-bottom:14px;">
+                        <span style="font-size:12px;font-weight:700;color:#a1a1aa;text-transform:uppercase;letter-spacing:0.8px;">What to do next</span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>
+                        <table cellpadding="0" cellspacing="0" width="100%">
+                          <tr>
+                            <td style="padding:10px 0;border-bottom:1px solid #f4f4f5;">
+                              <table cellpadding="0" cellspacing="0">
+                                <tr>
+                                  <td style="width:28px;height:28px;background:#fdf2f8;border-radius:50%;text-align:center;vertical-align:middle;font-size:13px;font-weight:700;color:#db2777;">1</td>
+                                  <td style="padding-left:12px;font-size:14px;color:#3f3f46;">Open the attached PDF and read your task carefully.</td>
+                                </tr>
+                              </table>
+                            </td>
+                          </tr>
+                          <tr>
+                            <td style="padding:10px 0;border-bottom:1px solid #f4f4f5;">
+                              <table cellpadding="0" cellspacing="0">
+                                <tr>
+                                  <td style="width:28px;height:28px;background:#fdf2f8;border-radius:50%;text-align:center;vertical-align:middle;font-size:13px;font-weight:700;color:#db2777;">2</td>
+                                  <td style="padding-left:12px;font-size:14px;color:#3f3f46;">Fork or clone the starter repo and complete the task.</td>
+                                </tr>
+                              </table>
+                            </td>
+                          </tr>
+                          <tr>
+                            <td style="padding:10px 0;">
+                              <table cellpadding="0" cellspacing="0">
+                                <tr>
+                                  <td style="width:28px;height:28px;background:#fdf2f8;border-radius:50%;text-align:center;vertical-align:middle;font-size:13px;font-weight:700;color:#db2777;">3</td>
+                                  <td style="padding-left:12px;font-size:14px;color:#3f3f46;">Reply to this email with your GitHub link within <strong style="color:#db2777;">${task.deadline_days} days</strong>.</td>
+                                </tr>
+                              </table>
+                            </td>
+                          </tr>
+                        </table>
+                      </td>
+                    </tr>
+                  </table>
+
+                  <!-- Repo button -->
+                  <table cellpadding="0" cellspacing="0" style="margin-bottom:32px;">
+                    <tr>
+                      <td style="background:#db2777;border-radius:10px;">
+                        <a href="https://github.com/hastivasani5-lang/taskmanager"
+                           style="display:inline-block;padding:12px 24px;color:white;text-decoration:none;font-size:14px;font-weight:600;letter-spacing:0.2px;">
+                          View Starter Repository →
+                        </a>
+                      </td>
+                    </tr>
+                  </table>
+
+                  <!-- Divider -->
+                  <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
+                    <tr><td style="height:1px;background:#f4f4f5;font-size:0;">&nbsp;</td></tr>
+                  </table>
+
+                  <!-- Sign off -->
+                  <p style="margin:0;font-size:14px;color:#71717a;line-height:1.7;">
+                    Good luck — we're excited to see what you build!<br/>
+                    <strong style="color:#18181b;">Sensussoft Hiring Team</strong>
+                  </p>
+
+                </td>
+              </tr>
+            </table>
+
+          </td>
+        </tr>
+
+        <!-- Footer -->
+        <tr>
+          <td style="padding:28px 0 0;text-align:center;">
+            <p style="margin:0 0 4px;font-size:12px;color:#a1a1aa;">© ${year} Sensussoft. All rights reserved.</p>
+            <p style="margin:0;font-size:12px;color:#d4d4d8;">This task was AI-generated based on your application profile.</p>
+          </td>
+        </tr>
+
+      </table>
+    </td></tr>
+  </table>
+
+</body>
+</html>`;
 }
 
 // ── Nodemailer: Send email with PDF attachment ─────────────────────────────
