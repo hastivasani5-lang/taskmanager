@@ -1,0 +1,60 @@
+import { NextRequest, NextResponse } from "next/server";
+import { store } from "@/lib/store";
+
+function isAuthenticated(req: NextRequest): boolean {
+  const session = req.cookies.get("admin_session");
+  return session?.value === "authenticated";
+}
+
+export async function GET(req: NextRequest) {
+  if (!isAuthenticated(req)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const submissions = store.getAll();
+  return NextResponse.json({ submissions });
+}
+
+export async function PATCH(req: NextRequest) {
+  if (!isAuthenticated(req)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  try {
+    const { id, status } = await req.json();
+    if (!id || !status) {
+      return NextResponse.json({ error: "id and status required" }, { status: 400 });
+    }
+
+    const updated = store.updateStatus(id, status);
+    if (!updated) {
+      return NextResponse.json({ error: "Submission not found" }, { status: 404 });
+    }
+
+    return NextResponse.json({ success: true });
+  } catch {
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  if (!isAuthenticated(req)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  try {
+    const { id } = await req.json();
+    if (!id) {
+      return NextResponse.json({ error: "id required" }, { status: 400 });
+    }
+
+    const deleted = store.delete(id);
+    if (!deleted) {
+      return NextResponse.json({ error: "Submission not found" }, { status: 404 });
+    }
+
+    return NextResponse.json({ success: true });
+  } catch {
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+}

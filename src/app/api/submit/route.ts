@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import nodemailer from "nodemailer";
 import PDFDocument from "pdfkit";
+import { store } from "@/lib/store";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 interface ApplicationData {
@@ -27,6 +28,7 @@ interface GeneratedTask {
 
 // ── Gemini: Generate custom task as JSON ───────────────────────────────────
 async function generateTask(data: ApplicationData): Promise<GeneratedTask> {
+  console.log("ENV CHECK:", process.env.GEMINI_API_KEY);
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
   const modelsToTry = ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-2.5-flash"];
 
@@ -372,6 +374,17 @@ export async function POST(req: NextRequest) {
     console.log(`📧 Sending email to ${email}...`);
     await sendEmail(applicationData, task);
     console.log("✅ Email sent successfully.");
+
+    // Save to in-memory store for admin panel
+    store.add({
+      name,
+      email,
+      role,
+      experience,
+      skills,
+      resumeFilename,
+      taskTitle: task.title,
+    });
 
     return NextResponse.json({
       success: true,
