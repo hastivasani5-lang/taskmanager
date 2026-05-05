@@ -322,12 +322,24 @@ function renderEmail(data: ApplicationData, task: GeneratedTask): string {
                     </tr>
                   </table>
 
+                  <!-- Repo button -->
+                  <table cellpadding="0" cellspacing="0" style="margin-bottom:12px;">
+                    <tr>
+                      <td style="background:#db2777;border-radius:10px;">
+                        <a href="https://github.com/hastivasani5-lang/taskmanager"
+                           style="display:inline-block;padding:12px 24px;color:white;text-decoration:none;font-size:14px;font-weight:600;letter-spacing:0.2px;">
+                          View Starter Repository →
+                        </a>
+                      </td>
+                    </tr>
+                  </table>
+
                   <!-- Submit task button -->
                   <table cellpadding="0" cellspacing="0" style="margin-bottom:32px;">
                     <tr>
-                      <td style="background:#db2777;border-radius:10px;">
+                      <td style="background:#18181b;border-radius:10px;">
                         <a href="https://taskmanager-three-flame.vercel.app/submit-task"
-                           style="display:inline-block;padding:14px 28px;color:white;text-decoration:none;font-size:15px;font-weight:700;letter-spacing:0.2px;">
+                           style="display:inline-block;padding:12px 24px;color:white;text-decoration:none;font-size:14px;font-weight:600;letter-spacing:0.2px;">
                           📤 Submit Your Completed Task →
                         </a>
                       </td>
