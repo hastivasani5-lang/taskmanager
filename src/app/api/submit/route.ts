@@ -302,7 +302,7 @@ function renderEmail(data: ApplicationData, task: GeneratedTask): string {
                               <table cellpadding="0" cellspacing="0">
                                 <tr>
                                   <td style="width:28px;height:28px;background:#fdf2f8;border-radius:50%;text-align:center;vertical-align:middle;font-size:13px;font-weight:700;color:#db2777;">2</td>
-                                  <td style="padding-left:12px;font-size:14px;color:#3f3f46;">Fork or clone the starter repo and complete the task.</td>
+                                  <td style="padding-left:12px;font-size:14px;color:#3f3f46;">Complete the task and prepare your submission file.</td>
                                 </tr>
                               </table>
                             </td>
@@ -312,7 +312,7 @@ function renderEmail(data: ApplicationData, task: GeneratedTask): string {
                               <table cellpadding="0" cellspacing="0">
                                 <tr>
                                   <td style="width:28px;height:28px;background:#fdf2f8;border-radius:50%;text-align:center;vertical-align:middle;font-size:13px;font-weight:700;color:#db2777;">3</td>
-                                  <td style="padding-left:12px;font-size:14px;color:#3f3f46;">Reply to this email with your GitHub link within <strong style="color:#db2777;">${task.deadline_days} days</strong>.</td>
+                                  <td style="padding-left:12px;font-size:14px;color:#3f3f46;">Click <strong style="color:#db2777;">"Submit Your Completed Task"</strong> below and upload your file within <strong style="color:#db2777;">${task.deadline_days} days</strong>.</td>
                                 </tr>
                               </table>
                             </td>
@@ -322,24 +322,12 @@ function renderEmail(data: ApplicationData, task: GeneratedTask): string {
                     </tr>
                   </table>
 
-                  <!-- Repo button -->
-                  <table cellpadding="0" cellspacing="0" style="margin-bottom:32px;">
-                    <tr>
-                      <td style="background:#db2777;border-radius:10px;margin-right:10px;">
-                        <a href="https://github.com/hastivasani5-lang/taskmanager"
-                           style="display:inline-block;padding:12px 24px;color:white;text-decoration:none;font-size:14px;font-weight:600;letter-spacing:0.2px;">
-                          View Starter Repository →
-                        </a>
-                      </td>
-                    </tr>
-                  </table>
-
                   <!-- Submit task button -->
                   <table cellpadding="0" cellspacing="0" style="margin-bottom:32px;">
                     <tr>
-                      <td style="background:#18181b;border-radius:10px;">
+                      <td style="background:#db2777;border-radius:10px;">
                         <a href="https://taskmanager-three-flame.vercel.app/submit-task"
-                           style="display:inline-block;padding:12px 24px;color:white;text-decoration:none;font-size:14px;font-weight:600;letter-spacing:0.2px;">
+                           style="display:inline-block;padding:14px 28px;color:white;text-decoration:none;font-size:15px;font-weight:700;letter-spacing:0.2px;">
                           📤 Submit Your Completed Task →
                         </a>
                       </td>
