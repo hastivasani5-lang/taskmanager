@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import Groq from "groq-sdk";
 import nodemailer from "nodemailer";
 import PDFDocument from "pdfkit";
 import { store } from "@/lib/store";
@@ -26,11 +26,9 @@ interface GeneratedTask {
   difficulty: string;
 }
 
-// ── Gemini: Generate custom task as JSON ───────────────────────────────────
+// ── Groq: Generate custom task as JSON ────────────────────────────────────
 async function generateTask(data: ApplicationData): Promise<GeneratedTask> {
-  console.log("ENV CHECK:", process.env.GEMINI_API_KEY);
-  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-  const modelsToTry = ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-2.5-flash"];
+  const groq = new Groq({ apiKey: process.env.GROQ_API_KEY! });
 
   // Parse experience years from string like "1-2 years", "7+ years"
   const expStr = data.experience.toLowerCase();
@@ -71,49 +69,31 @@ Return ONLY valid JSON with these exact keys:
 
 No markdown, no code fences, just raw JSON.`;
 
-  const MAX_RETRIES = 3;
-  const RETRY_DELAY_MS = 2000;
+  const modelsToTry = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "gemma2-9b-it"];
+
   for (const modelName of modelsToTry) {
-    let attempt = 0;
-    while (attempt < MAX_RETRIES) {
-      try {
-        const model = genAI.getGenerativeModel({ model: modelName });
-        const result = await model.generateContent(prompt);
-        let text = result.response.text();
+    try {
+      const completion = await groq.chat.completions.create({
+        model: modelName,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.7,
+        max_tokens: 1024,
+      });
 
-        // Strip markdown code fences if AI wraps JSON
-        text = text.replace(/```json|```/g, "").trim();
+      let text = completion.choices[0]?.message?.content || "";
+      // Strip markdown code fences if model wraps JSON
+      text = text.replace(/```json|```/g, "").trim();
 
-        const parsed: GeneratedTask = JSON.parse(text);
-        console.log(`✅ Task generated with model: ${modelName}`);
-        return parsed;
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (
-          msg.includes("429") ||
-          msg.includes("404") ||
-          msg.includes("not found") ||
-          msg.includes("quota") ||
-          msg.includes("503") ||
-          msg.includes("high demand") ||
-          msg.includes("temporarily")
-        ) {
-          attempt++;
-          if (attempt < MAX_RETRIES) {
-            console.log(`⚠️ Model ${modelName} failed (attempt ${attempt}), retrying in ${RETRY_DELAY_MS}ms...`);
-            await new Promise((res) => setTimeout(res, RETRY_DELAY_MS));
-            continue;
-          } else {
-            console.log(`⚠️ Model ${modelName} failed after ${MAX_RETRIES} attempts, trying next...`);
-            break;
-          }
-        }
-        throw err;
-      }
+      const parsed: GeneratedTask = JSON.parse(text);
+      console.log(`✅ Task generated with model: ${modelName}`);
+      return parsed;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log(`⚠️ Model ${modelName} failed: ${msg}, trying next...`);
     }
   }
 
-  throw new Error("All Gemini models failed. Please check your API key quota at aistudio.google.com");
+  throw new Error("All AI models failed. Please check your GROQ_API_KEY.");
 }
 
 // ── PDFKit: Generate PDF buffer ────────────────────────────────────────────
@@ -340,7 +320,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "All fields are required" }, { status: 400 });
     }
 
-    if (!process.env.GEMINI_API_KEY || !process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
+    if (!process.env.GROQ_API_KEY || !process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
       return NextResponse.json(
         { error: "Server configuration missing. Check environment variables." },
         { status: 500 }

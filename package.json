@@ -3,13 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --port 3000",
+    "dev": "npx --yes kill-port 3000 && next dev --port 3000",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
+    "groq-sdk": "^1.1.2",
     "next": "16.2.4",
     "nodemailer": "^8.0.7",
     "pdfkit": "^0.18.0",
