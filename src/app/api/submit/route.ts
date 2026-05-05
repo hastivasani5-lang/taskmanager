@@ -325,10 +325,22 @@ function renderEmail(data: ApplicationData, task: GeneratedTask): string {
                   <!-- Repo button -->
                   <table cellpadding="0" cellspacing="0" style="margin-bottom:32px;">
                     <tr>
-                      <td style="background:#db2777;border-radius:10px;">
+                      <td style="background:#db2777;border-radius:10px;margin-right:10px;">
                         <a href="https://github.com/hastivasani5-lang/taskmanager"
                            style="display:inline-block;padding:12px 24px;color:white;text-decoration:none;font-size:14px;font-weight:600;letter-spacing:0.2px;">
                           View Starter Repository →
+                        </a>
+                      </td>
+                    </tr>
+                  </table>
+
+                  <!-- Submit task button -->
+                  <table cellpadding="0" cellspacing="0" style="margin-bottom:32px;">
+                    <tr>
+                      <td style="background:#18181b;border-radius:10px;">
+                        <a href="https://taskmanager-three-flame.vercel.app/submit-task"
+                           style="display:inline-block;padding:12px 24px;color:white;text-decoration:none;font-size:14px;font-weight:600;letter-spacing:0.2px;">
+                          📤 Submit Your Completed Task →
                         </a>
                       </td>
                     </tr>
@@ -454,13 +466,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Optional webhook secret check (if WEBHOOK_SECRET is set in env)
-    if (process.env.WEBHOOK_SECRET) {
-      const secret = req.headers.get("x-webhook-secret");
-      if (secret !== process.env.WEBHOOK_SECRET) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-      }
-    }
+    // No webhook secret check — open for all submissions
 
     const applicationData: ApplicationData = {
       name, email, role, experience, skills,

@@ -75,7 +75,6 @@ export default function Home() {
 
       const res = await fetch("/api/submit", {
         method: "POST",
-        headers: { "x-webhook-secret": "demo-secret-do-not-change" },
         body: payload,
       });
 
