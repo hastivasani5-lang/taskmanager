@@ -13,6 +13,8 @@ export interface Submission {
   submittedAt: string; // ISO string
   status: "pending" | "reviewed" | "rejected";
   githubRepo?: string; // GitHub repo URL for tracking
+  repoOwner?: string;  // GitHub repo owner (for file uploads)
+  repoName?: string;   // GitHub repo name (for file uploads)
   taskProgress?: number; // 0-100 percentage
   lastUpdated?: string; // Last progress update timestamp
 }

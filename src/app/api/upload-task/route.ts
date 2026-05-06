@@ -31,6 +31,22 @@ export async function POST(req: NextRequest) {
     // Update store
     if (submission) store.updateProgress(email, progress);
 
+    // Push file to candidate's GitHub repo (if we have repo info)
+    if (submission?.repoOwner && submission?.repoName) {
+      try {
+        await pushFileToRepo(
+          submission.repoOwner,
+          submission.repoName,
+          filename,
+          fileBuffer
+        );
+        console.log(`✅ File pushed to GitHub: ${submission.repoOwner}/${submission.repoName}`);
+      } catch (ghErr) {
+        console.warn("⚠️ Could not push file to GitHub repo:", ghErr);
+        // Non-fatal — HR email will still be sent
+      }
+    }
+
     // Send HR email
     await sendHREmail({ candidateName, candidateEmail: email, role, taskTitle, filename, fileBuffer, progress });
 
@@ -40,6 +56,59 @@ export async function POST(req: NextRequest) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("Upload error:", err);
     return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}
+
+// ── Push submitted file to GitHub repo ────────────────────────────────────
+async function pushFileToRepo(
+  owner: string,
+  repo: string,
+  filename: string,
+  buffer: Buffer
+): Promise<void> {
+  const token = process.env.GITHUB_TOKEN;
+  if (!token) throw new Error("GITHUB_TOKEN not set");
+
+  // Check if file already exists (to get its SHA for update)
+  let sha: string | undefined;
+  const checkRes = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/contents/submission/${filename}`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+    }
+  );
+  if (checkRes.ok) {
+    const existing = await checkRes.json();
+    sha = existing.sha;
+  }
+
+  const body: Record<string, string> = {
+    message: `Add submission: ${filename}`,
+    content: buffer.toString("base64"),
+  };
+  if (sha) body.sha = sha;
+
+  const putRes = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/contents/submission/${filename}`,
+    {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "Content-Type": "application/json",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+      body: JSON.stringify(body),
+    }
+  );
+
+  if (!putRes.ok) {
+    const err = await putRes.json();
+    throw new Error(`GitHub push failed: ${err.message ?? putRes.status}`);
   }
 }
 
