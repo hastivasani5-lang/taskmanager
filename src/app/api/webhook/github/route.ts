@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import Groq from "groq-sdk";
 import nodemailer from "nodemailer";
 import { store } from "@/lib/store";
+import { openRouterChat } from "@/lib/openrouter";
 
 // ── GitHub Webhook — push event handler ───────────────────────────────────
 export async function POST(req: NextRequest) {
@@ -47,6 +47,19 @@ export async function POST(req: NextRequest) {
     }
     console.log(`✅ Progress: ${progress}%`);
 
+    // ── ONE-TIME PUSH LOCK: Lock repo after first push ────────────────────
+    // Check if this is the first push by checking if taskProgress was 0 before
+    const isFirstPush = submission && (submission.taskProgress == null || submission.taskProgress === 0);
+    
+    if (isFirstPush && submission?.repoOwner && submission?.repoName) {
+      try {
+        await lockRepository(submission.repoOwner, submission.repoName, branch);
+        console.log(`🔒 Repository locked: ${submission.repoOwner}/${submission.repoName}`);
+      } catch (lockErr) {
+        console.error("❌ Failed to lock repository:", lockErr);
+      }
+    }
+
     // Always notify HR (hastivasani5@gmail.com = GMAIL_USER)
     if (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
       await sendHRNotification({
@@ -62,6 +75,7 @@ export async function POST(req: NextRequest) {
         commitUrl,
         progress,
         taskTitle,
+        repoLocked:     isFirstPush ?? false,
       });
       console.log(`📧 HR notified at ${process.env.GMAIL_USER}`);
     }
@@ -75,13 +89,58 @@ export async function POST(req: NextRequest) {
   }
 }
 
+// ── Lock repository after first push ───────────────────────────────────────
+async function lockRepository(owner: string, repo: string, branch: string): Promise<void> {
+  const token = process.env.GITHUB_TOKEN;
+  if (!token) throw new Error("GITHUB_TOKEN not set");
+
+  // 1. Enable branch protection (no force push, no deletion, require PR for changes)
+  await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/branches/${branch}/protection`,
+    {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "Content-Type": "application/json",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+      body: JSON.stringify({
+        required_status_checks: null,
+        enforce_admins: true,
+        required_pull_request_reviews: null,
+        restrictions: null,
+        required_linear_history: false,
+        allow_force_pushes: false,
+        allow_deletions: false,
+        block_creations: false,
+        required_conversation_resolution: false,
+        lock_branch: true, // Lock branch — no new commits allowed
+        allow_fork_syncing: false,
+      }),
+    }
+  );
+
+  // 2. Archive the repository (makes it read-only)
+  await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "Content-Type": "application/json",
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+    body: JSON.stringify({
+      archived: true,
+    }),
+  });
+}
+
 // ── AI progress analyser ───────────────────────────────────────────────────
 async function analyzeTaskProgress(
   payload: Record<string, unknown>,
   taskTitle: string
 ): Promise<number> {
-  const groq = new Groq({ apiKey: process.env.GROQ_API_KEY! });
-
   const commits = (payload.commits as Record<string, unknown>[] | undefined) ?? [];
   const added: string[]    = [];
   const modified: string[] = [];
@@ -106,14 +165,13 @@ Consider: source files, config, tests, README, typical project structure.
 Return ONLY a number between 0 and 100, nothing else.`;
 
   try {
-    const completion = await groq.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
+    const text = await openRouterChat({
+      model: "meta-llama/llama-3.3-70b-instruct",
       messages: [{ role: "user", content: prompt }],
       temperature: 0.3,
       max_tokens: 10,
     });
-    const text = completion.choices[0]?.message?.content?.trim() ?? "0";
-    const n    = parseInt(text, 10);
+    const n = parseInt(text.trim(), 10);
     return isNaN(n) ? 0 : Math.min(100, Math.max(0, n));
   } catch {
     return Math.min(100, allFiles.length * 10);
@@ -134,6 +192,7 @@ interface HRNotifParams {
   commitUrl:      string;
   progress:       number;
   taskTitle:      string;
+  repoLocked:     boolean;
 }
 
 async function sendHRNotification(p: HRNotifParams): Promise<void> {
@@ -250,7 +309,7 @@ async function sendHRNotification(p: HRNotifParams): Promise<void> {
           </table>
 
           <!-- Buttons -->
-          <table cellpadding="0" cellspacing="0">
+          <table cellpadding="0" cellspacing="0" style="margin-bottom:16px;">
             <tr>
               <td style="padding-right:10px;">
                 <a href="${p.repoUrl}" style="display:inline-block;background:#db2777;color:white;text-decoration:none;padding:11px 20px;border-radius:9px;font-size:13px;font-weight:600;">
@@ -264,6 +323,17 @@ async function sendHRNotification(p: HRNotifParams): Promise<void> {
               </td>
             </tr>
           </table>
+
+          ${p.repoLocked ? `
+          <!-- Lock notice -->
+          <table width="100%" cellpadding="0" cellspacing="0">
+            <tr><td style="background:#fef3c7;border-radius:10px;border:1px solid #fde68a;padding:14px 18px;">
+              <p style="margin:0;font-size:13px;color:#92400e;font-weight:600;">
+                🔒 Repository has been permanently locked — no further pushes are allowed.
+              </p>
+            </td></tr>
+          </table>
+          ` : ""}
 
         </td></tr>
       </table>

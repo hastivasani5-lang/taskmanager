@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import Groq from "groq-sdk";
 import nodemailer from "nodemailer";
 import PDFDocument from "pdfkit";
 import { store } from "@/lib/store";
+import { openRouterChat } from "@/lib/openrouter";
+import * as pdfParseLib from "pdf-parse";
+import mammoth from "mammoth";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 interface ApplicationData {
@@ -14,6 +16,7 @@ interface ApplicationData {
   resumeBuffer?: Buffer;
   resumeFilename?: string;
   resumeMimeType?: string;
+  resumeText?: string; // extracted plain text from CV
 }
 
 interface GeneratedTask {
@@ -24,6 +27,28 @@ interface GeneratedTask {
   evaluation_criteria: string[];
   deadline_days: number;
   difficulty: string;
+}
+
+// ── CV text extraction ─────────────────────────────────────────────────────
+async function extractResumeText(buffer: Buffer, mimeType: string): Promise<string> {
+  try {
+    if (mimeType === "application/pdf") {
+      // pdf-parse v2 uses a class-based API: new PDFParse({ data: buffer })
+      const parser = new pdfParseLib.PDFParse({ data: buffer });
+      const result = await parser.getText();
+      return result.text.slice(0, 4000);
+    }
+    if (
+      mimeType === "application/msword" ||
+      mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    ) {
+      const result = await mammoth.extractRawText({ buffer });
+      return result.value.slice(0, 4000);
+    }
+  } catch (err) {
+    console.warn("⚠️ CV text extraction failed:", err);
+  }
+  return "";
 }
 
 // ── GitHub: Create a fresh repo for the candidate ─────────────────────────
@@ -116,10 +141,113 @@ async function createCandidateRepo(
   return { repoUrl: repo.html_url as string, repoOwner, repoName };
 }
 
-// ── Groq: Generate custom task as JSON ────────────────────────────────────
-async function generateTask(data: ApplicationData): Promise<GeneratedTask> {
-  const groq = new Groq({ apiKey: process.env.GROQ_API_KEY! });
+// ── OpenRouter: Validate candidate before generating task ─────────────────
+interface ValidationResult {
+  valid: true;
+  category: string;
+  detected_seniority: string;
+  summary: string;
+}
+interface ValidationFailed {
+  valid: false;
+  error: string;
+}
+type ValidationResponse = ValidationResult | ValidationFailed;
 
+async function validateCandidate(data: ApplicationData): Promise<ValidationResponse> {
+  const cvBlock = data.resumeText
+    ? `\nCandidate CV (extracted):\n"""\n${data.resumeText.slice(0, 2000)}\n"""`
+    : "";
+
+  const systemPrompt = `You are a candidate validation system for Sensussoft hiring platform.
+Your job is to check if a candidate application is genuine or spam/fake.
+
+ACCEPT if the candidate:
+- Has a role that is clearly IT/software related (even with minor typos like "devloper", "enginer", "desiner")
+- Has skills that are real technologies or tools (React, Node.js, Python, Figma, AWS, etc.)
+- Has a name that looks like a real person (at least 3 characters)
+- Has a valid email format
+
+REJECT only if the candidate is clearly fake/spam:
+- Role is complete gibberish (e.g. "asdfgh", "xyz123", "aaabbb", random keyboard mashing)
+- Skills are all gibberish (e.g. "fdse asd qwerty" with no real tech words at all)
+- Name is clearly fake (e.g. single character, random symbols)
+
+IMPORTANT:
+- Be LENIENT with typos. "full stack devloper", "reactjs", "node js", "ui ux desiner" are all VALID.
+- A mix of real and slightly misspelled tech skills is VALID.
+- When in doubt, ACCEPT the candidate. It is better to accept a borderline case than reject a real candidate.
+- Only reject obvious spam/gibberish.
+
+If INVALID — return ONLY:
+{"valid": false, "error": "Invalid professional role or fake candidate data detected"}
+
+If VALID — return ONLY:
+{"valid": true, "category": "development|design|qa|devops|product", "detected_seniority": "junior|mid|senior", "summary": "short candidate summary"}
+
+Return ONLY raw JSON, no markdown, no explanation.`;
+
+  const userPrompt = `Validate this candidate:
+- Name: ${data.name}
+- Email: ${data.email}
+- Role applied: ${data.role}
+- Experience: ${data.experience}
+- Skills: ${data.skills}
+${cvBlock}
+
+Return ONLY valid JSON, no markdown, no explanation.`;
+
+  try {
+    let text = await openRouterChat({
+      model: "meta-llama/llama-3.3-70b-instruct",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user",   content: userPrompt },
+      ],
+      temperature: 0.1,
+      max_tokens: 200,
+    });
+
+    text = text.replace(/```json|```/g, "").trim();
+    const result: ValidationResponse = JSON.parse(text);
+    return result;
+  } catch (err) {
+    // If validation itself fails, log and allow through (fail-open)
+    console.warn("⚠️ Validation AI call failed, allowing through:", err);
+    return { valid: true, category: "development", detected_seniority: "mid", summary: "Validation skipped" };
+  }
+}
+
+// ── OpenRouter: Generate custom task as JSON ──────────────────────────────
+
+// Detect role category so the AI picks the right deliverable type
+function detectRoleCategory(role: string): string {
+  const r = role.toLowerCase();
+  if (/design|ui|ux|visual|graphic|figma|product design/.test(r)) return "design";
+  if (/qa|tester|sdet|quality|automation|test engineer/.test(r))   return "qa";
+  if (/devops|sre|platform|cloud|infra|infrastructure|cicd|ci\/cd/.test(r)) return "devops";
+  if (/product manager|pm\b|business analyst|ba\b|roadmap/.test(r)) return "product";
+  // default: development
+  return "development";
+}
+
+const CATEGORY_DELIVERABLE: Record<string, string> = {
+  design:      "A Figma file (share link) or a PDF of your mockups/wireframes",
+  qa:          "A test plan document + at least one automation script (any framework)",
+  devops:      "A GitHub repo containing CI/CD config or Infrastructure-as-Code files",
+  product:     "A PRD (Product Requirements Document) or a prioritised roadmap document",
+  development: "A GitHub repository link with working code",
+};
+
+const CATEGORY_TASK_TYPE: Record<string, string> = {
+  design:      "UI/UX design challenge",
+  qa:          "QA / test engineering challenge",
+  devops:      "DevOps / infrastructure challenge",
+  product:     "Product management challenge",
+  development: "software development challenge",
+};
+
+async function generateTask(data: ApplicationData): Promise<GeneratedTask> {
   // Parse experience years from string like "1-2 years", "7+ years"
   const expStr = data.experience.toLowerCase();
   let expYears = 0;
@@ -128,23 +256,38 @@ async function generateTask(data: ApplicationData): Promise<GeneratedTask> {
   else if (expStr.includes("3")) expYears = 3;
   else if (expStr.includes("1")) expYears = 1;
 
-  const prompt = `You are a senior engineering manager at Sensussoft.
-Generate a practical take-home task for this candidate.
+  const category   = detectRoleCategory(data.role);
+  const deliverable = CATEGORY_DELIVERABLE[category];
+  const taskType    = CATEGORY_TASK_TYPE[category];
 
+  // Build CV context block if we extracted text from the resume
+  const cvContext = data.resumeText
+    ? `\nCandidate CV / Resume (extracted text):\n"""\n${data.resumeText}\n"""\nUse the CV to personalise the task — reference the candidate's actual projects, technologies, and experience level where relevant.\n`
+    : "";
+
+  const prompt = `You are a hiring manager at Sensussoft creating a take-home assessment.
+Generate a practical ${taskType} for the candidate below.
+${cvContext}
 Candidate:
 - Name: ${data.name}
 - Role applied: ${data.role}
 - Experience: ${data.experience} (approx ${expYears} years)
 - Skills: ${data.skills}
 
-Rules:
-- Junior (0-2y): small CRUD/UI exercise, ~3 hours of work.
-- Mid (3-5y): full feature with API + frontend, ~6 hours.
-- Senior (6+y): architecture problem + small implementation, ~8 hours.
-- Match the tech stack to the role applied.
-- Deliverable: a GitHub repo link.
+Role category: ${category}
+Required deliverable: ${deliverable}
+
+Difficulty rules:
+- Junior (0-2y): focused, well-scoped task, ~3 hours of work.
+- Mid-level (3-5y): broader task with multiple components, ~6 hours.
+- Senior (6+y): architecture or strategy problem + implementation, ~8 hours.
+
+Important:
+- The task MUST match the role category (${category}). Do NOT generate a coding task for a design or PM role.
+- Tailor requirements to the candidate's actual skills and experience from their CV if provided.
+- The deliverable MUST be: ${deliverable}
 - Deadline: 3 days.
-- Include 4 evaluation criteria.
+- Include exactly 4 evaluation criteria relevant to the role category.
 
 Return ONLY valid JSON with these exact keys:
 {
@@ -152,30 +295,34 @@ Return ONLY valid JSON with these exact keys:
   "difficulty": "Junior | Mid-level | Senior",
   "scenario": "string (2-3 sentences)",
   "requirements": ["string", "string", "string", "string"],
-  "deliverables": ["string", "string"],
+  "deliverables": ["${deliverable}"],
   "evaluation_criteria": ["string", "string", "string", "string"],
   "deadline_days": number
 }
 
 No markdown, no code fences, just raw JSON.`;
 
-  const modelsToTry = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "gemma2-9b-it"];
+  // OpenRouter model fallback chain
+  const modelsToTry = [
+    "meta-llama/llama-3.3-70b-instruct",
+    "meta-llama/llama-3.1-8b-instruct",
+    "google/gemma-2-9b-it",
+  ];
 
   for (const modelName of modelsToTry) {
     try {
-      const completion = await groq.chat.completions.create({
+      let text = await openRouterChat({
         model: modelName,
         messages: [{ role: "user", content: prompt }],
         temperature: 0.7,
         max_tokens: 1024,
       });
 
-      let text = completion.choices[0]?.message?.content || "";
       // Strip markdown code fences if model wraps JSON
       text = text.replace(/```json|```/g, "").trim();
 
       const parsed: GeneratedTask = JSON.parse(text);
-      console.log(`✅ Task generated with model: ${modelName}`);
+      console.log(`✅ Task generated with model: ${modelName} (category: ${category})`);
       return parsed;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -183,100 +330,174 @@ No markdown, no code fences, just raw JSON.`;
     }
   }
 
-  throw new Error("All AI models failed. Please check your GROQ_API_KEY.");
+  throw new Error("All AI models failed. Please check your OPENROUTER_API_KEY.");
 }
 
 // ── PDFKit: Generate PDF buffer ────────────────────────────────────────────
 async function generatePDF(data: ApplicationData, task: GeneratedTask): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 50, size: "A4" });
+    const doc = new PDFDocument({ margin: 0, size: "A4" });
     const chunks: Buffer[] = [];
+    const W = 595.28; // A4 width in points
+    const MARGIN = 48;
+    const CONTENT_W = W - MARGIN * 2;
 
     doc.on("data", (chunk: Buffer) => chunks.push(chunk));
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
 
-    // ── Header ──
-    doc.rect(0, 0, doc.page.width, 80).fill("#831843");
-    doc.fillColor("white").fontSize(22).font("Times-Bold")
-      .text("Sensussoft — Practical Task", 50, 25);
-    doc.fontSize(11).font("Times-Roman")
-      .text("AI-Generated Candidate Assessment", 50, 52);
+    // ── Helpers ──────────────────────────────────────────────────────────
+    const diffColor = task.difficulty === "Senior"   ? "#dc2626" :
+                      task.difficulty === "Mid-level" ? "#d97706" : "#16a34a";
 
-    doc.moveDown(3);
+    const diffBg    = task.difficulty === "Senior"   ? "#fef2f2" :
+                      task.difficulty === "Mid-level" ? "#fffbeb" : "#f0fdf4";
 
-    // ── Candidate Info ──
-    doc.fillColor("#831843").fontSize(14).font("Times-Bold")
-      .text("Candidate Details");
-    doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor("#be185d").lineWidth(1).stroke();
-    doc.moveDown(0.5);
+    // Draw a filled rounded rectangle (PDFKit helper)
+    function filledRoundRect(x: number, y: number, w: number, h: number, r: number, color: string) {
+      doc.roundedRect(x, y, w, h, r).fill(color);
+    }
 
-    doc.fillColor("#333").fontSize(11).font("Times-Roman");
-    doc.text(`Name:        ${data.name}`);
-    doc.text(`Email:       ${data.email}`);
-    doc.text(`Role:        ${data.role}`);
-    doc.text(`Experience:  ${data.experience}`);
-    doc.text(`Skills:      ${data.skills}`);
-    doc.moveDown(1.5);
+    // Section heading with left accent bar
+    function sectionHeading(label: string, y: number): number {
+      // accent bar
+      doc.rect(MARGIN, y, 3, 18).fill("#db2777");
+      doc.fillColor("#111827").fontSize(12).font("Helvetica-Bold")
+        .text(label, MARGIN + 10, y + 2, { lineBreak: false });
+      return y + 18 + 10; // return next Y
+    }
 
-    // ── Difficulty Badge ──
-    const diffColor = task.difficulty === "Senior" ? "#c0392b" :
-      task.difficulty === "Mid-level" ? "#e67e22" : "#27ae60";
-    doc.roundedRect(50, doc.y, 100, 22, 5).fill(diffColor);
-    doc.fillColor("white").fontSize(10).font("Times-Bold")
-      .text(task.difficulty, 50, doc.y - 17, { width: 100, align: "center" });
-    doc.moveDown(1.5);
+    // ── HEADER BAND ───────────────────────────────────────────────────────
+    doc.rect(0, 0, W, 110).fill("#0f172a");
 
-    // ── Task Title ──
-    doc.fillColor("#831843").fontSize(16).font("Times-Bold")
-      .text(task.title);
-    doc.moveDown(0.5);
+    // Brand name
+    doc.fillColor("#f8fafc").fontSize(20).font("Helvetica-Bold")
+      .text("Sensussoft", MARGIN, 28, { lineBreak: false });
 
-    // ── Scenario ──
-    doc.fillColor("#555").fontSize(11).font("Times-Roman")
-      .text(task.scenario, { lineGap: 4 });
-    doc.moveDown(1.5);
+    // Subtitle
+    doc.fillColor("#94a3b8").fontSize(9).font("Helvetica")
+      .text("AI-Generated Candidate Assessment", MARGIN, 54, { lineBreak: false });
 
-    // ── Requirements ──
-    doc.fillColor("#831843").fontSize(13).font("Times-Bold").text("Requirements");
-    doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor("#be185d").lineWidth(0.5).stroke();
-    doc.moveDown(0.5);
-    doc.fillColor("#333").fontSize(11).font("Times-Roman");
+    // Difficulty pill (top-right)
+    const pillW = 90;
+    filledRoundRect(W - MARGIN - pillW, 30, pillW, 22, 11, diffBg);
+    doc.fillColor(diffColor).fontSize(9).font("Helvetica-Bold")
+      .text(task.difficulty.toUpperCase(), W - MARGIN - pillW, 37,
+        { width: pillW, align: "center", lineBreak: false });
+
+    // Thin accent line at bottom of header
+    doc.rect(0, 110, W, 3).fill("#db2777");
+
+    // ── TASK TITLE BLOCK ──────────────────────────────────────────────────
+    let curY = 130;
+
+    doc.fillColor("#111827").fontSize(17).font("Helvetica-Bold")
+      .text(task.title, MARGIN, curY, { width: CONTENT_W, lineBreak: true });
+
+    curY = doc.y + 6;
+
+    // Scenario text
+    doc.fillColor("#4b5563").fontSize(10).font("Helvetica")
+      .text(task.scenario, MARGIN, curY, { width: CONTENT_W, lineGap: 3 });
+
+    curY = doc.y + 18;
+
+    // ── CANDIDATE INFO CARD ───────────────────────────────────────────────
+    const cardH = 72;
+    filledRoundRect(MARGIN, curY, CONTENT_W, cardH, 8, "#f8fafc");
+    doc.rect(MARGIN, curY, CONTENT_W, cardH).stroke("#e2e8f0");
+
+    const col1 = MARGIN + 16;
+    const col2 = MARGIN + CONTENT_W / 2 + 8;
+    const rowGap = 18;
+    const labelY1 = curY + 14;
+    const labelY2 = curY + 14 + rowGap;
+    const labelY3 = curY + 14 + rowGap * 2;
+
+    // Labels
+    doc.fillColor("#9ca3af").fontSize(8).font("Helvetica-Bold");
+    doc.text("NAME",       col1,  labelY1, { lineBreak: false });
+    doc.text("EMAIL",      col2,  labelY1, { lineBreak: false });
+    doc.text("ROLE",       col1,  labelY2, { lineBreak: false });
+    doc.text("EXPERIENCE", col2,  labelY2, { lineBreak: false });
+    doc.text("SKILLS",     col1,  labelY3, { lineBreak: false });
+
+    // Values
+    doc.fillColor("#111827").fontSize(9).font("Helvetica");
+    doc.text(data.name,       col1,  labelY1 + 9, { lineBreak: false });
+    doc.text(data.email,      col2,  labelY1 + 9, { lineBreak: false });
+    doc.text(data.role,       col1,  labelY2 + 9, { lineBreak: false });
+    doc.text(data.experience, col2,  labelY2 + 9, { lineBreak: false });
+    doc.text(data.skills,     col1,  labelY3 + 9, { width: CONTENT_W - 20, lineBreak: false });
+
+    curY += cardH + 24;
+
+    // ── REQUIREMENTS ─────────────────────────────────────────────────────
+    curY = sectionHeading("Requirements", curY);
+
     task.requirements.forEach((req, i) => {
-      doc.text(`${i + 1}.  ${req}`, { lineGap: 3 });
-    });
-    doc.moveDown(1.5);
+      // Number circle
+      filledRoundRect(MARGIN, curY + 1, 18, 18, 9, "#fce7f3");
+      doc.fillColor("#db2777").fontSize(8).font("Helvetica-Bold")
+        .text(`${i + 1}`, MARGIN, curY + 5, { width: 18, align: "center", lineBreak: false });
 
-    // ── Deliverables ──
-    doc.fillColor("#831843").fontSize(13).font("Times-Bold").text("Deliverables");
-    doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor("#be185d").lineWidth(0.5).stroke();
-    doc.moveDown(0.5);
-    doc.fillColor("#333").fontSize(11).font("Times-Roman");
+      doc.fillColor("#374151").fontSize(10).font("Helvetica")
+        .text(req, MARGIN + 24, curY + 3, { width: CONTENT_W - 24, lineGap: 2 });
+
+      curY = doc.y + 8;
+    });
+
+    curY += 6;
+
+    // ── DELIVERABLES ──────────────────────────────────────────────────────
+    curY = sectionHeading("Deliverables", curY);
+
     task.deliverables.forEach((d) => {
-      doc.text(`•  ${d}`, { lineGap: 3 });
+      doc.fillColor("#db2777").fontSize(12).font("Helvetica-Bold")
+        .text("›", MARGIN + 2, curY + 1, { lineBreak: false });
+      doc.fillColor("#374151").fontSize(10).font("Helvetica")
+        .text(d, MARGIN + 18, curY + 3, { width: CONTENT_W - 18, lineGap: 2 });
+      curY = doc.y + 8;
     });
-    doc.moveDown(1.5);
 
-    // ── Evaluation Criteria ──
-    doc.fillColor("#831843").fontSize(13).font("Times-Bold").text("Evaluation Criteria");
-    doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor("#be185d").lineWidth(0.5).stroke();
-    doc.moveDown(0.5);
-    doc.fillColor("#333").fontSize(11).font("Times-Roman");
+    curY += 6;
+
+    // ── EVALUATION CRITERIA ───────────────────────────────────────────────
+    curY = sectionHeading("Evaluation Criteria", curY);
+
     task.evaluation_criteria.forEach((c) => {
-      doc.text(`✓  ${c}`, { lineGap: 3 });
+      // Checkmark circle
+      filledRoundRect(MARGIN, curY + 1, 18, 18, 9, "#dcfce7");
+      doc.fillColor("#16a34a").fontSize(9).font("Helvetica-Bold")
+        .text("✓", MARGIN, curY + 4, { width: 18, align: "center", lineBreak: false });
+
+      doc.fillColor("#374151").fontSize(10).font("Helvetica")
+        .text(c, MARGIN + 24, curY + 3, { width: CONTENT_W - 24, lineGap: 2 });
+
+      curY = doc.y + 8;
     });
-    doc.moveDown(1.5);
 
-    // ── Deadline ──
-    doc.rect(50, doc.y, 495, 36).fill("#fff0f6");
-    doc.fillColor("#831843").fontSize(12).font("Times-Bold")
-      .text(`Deadline: ${task.deadline_days} days from receipt of this email`, 60, doc.y - 26);
-    doc.moveDown(2);
+    curY += 10;
 
-    // ── Footer ──
-    doc.fillColor("#999").fontSize(9).font("Times-Roman")
-      .text("This task was AI-generated by Sensussoft Hiring System based on the candidate's profile.",
-        50, doc.page.height - 50, { align: "center" });
+    // ── DEADLINE BANNER ───────────────────────────────────────────────────
+    filledRoundRect(MARGIN, curY, CONTENT_W, 38, 8, "#fdf2f8");
+    doc.rect(MARGIN, curY, CONTENT_W, 38).stroke("#fce7f3");
+    // Clock icon substitute
+    doc.fillColor("#db2777").fontSize(14).font("Helvetica-Bold")
+      .text("⏰", MARGIN + 14, curY + 10, { lineBreak: false });
+    doc.fillColor("#831843").fontSize(10).font("Helvetica-Bold")
+      .text(`Deadline: ${task.deadline_days} days from receipt of this email`,
+        MARGIN + 36, curY + 13, { lineBreak: false });
+
+    // ── FOOTER ────────────────────────────────────────────────────────────
+    const footerY = 841.89 - 36; // A4 height - 36
+    doc.rect(0, footerY, W, 36).fill("#0f172a");
+    doc.fillColor("#64748b").fontSize(8).font("Helvetica")
+      .text(
+        `Generated by Sensussoft Hiring System  ·  ${new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}`,
+        MARGIN, footerY + 13,
+        { width: CONTENT_W, align: "center", lineBreak: false }
+      );
 
     doc.end();
   });
@@ -482,14 +703,7 @@ async function sendEmail(data: ApplicationData, task: GeneratedTask, repoUrl: st
     },
   ];
 
-  // Also attach the candidate's resume if provided
-  if (data.resumeBuffer && data.resumeFilename) {
-    attachments.push({
-      filename: data.resumeFilename,
-      content: data.resumeBuffer,
-      contentType: data.resumeMimeType || "application/octet-stream",
-    });
-  }
+  // Resume is used only for AI text extraction — not attached to the email
 
   await transporter.sendMail({
     from: `"Sensussoft Careers" <${process.env.GMAIL_USER}>`,
@@ -542,7 +756,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "All fields are required" }, { status: 400 });
     }
 
-    if (!process.env.GROQ_API_KEY || !process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
+    if (!process.env.OPENROUTER_API_KEY || !process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
       return NextResponse.json(
         { error: "Server configuration missing. Check environment variables." },
         { status: 500 }
@@ -551,9 +765,17 @@ export async function POST(req: NextRequest) {
 
     // No webhook secret check — open for all submissions
 
+    // Extract text from CV so the AI can personalise the task
+    let resumeText = "";
+    if (resumeBuffer && resumeMimeType) {
+      console.log("📄 Extracting text from CV...");
+      resumeText = await extractResumeText(resumeBuffer, resumeMimeType);
+      if (resumeText) console.log(`✅ CV text extracted (${resumeText.length} chars)`);
+    }
+
     const applicationData: ApplicationData = {
       name, email, role, experience, skills,
-      resumeBuffer, resumeFilename, resumeMimeType,
+      resumeBuffer, resumeFilename, resumeMimeType, resumeText,
     };
 
     console.log(`\n=== New candidate received ===`);
@@ -563,7 +785,53 @@ export async function POST(req: NextRequest) {
     console.log(`Skills: ${skills}`);
     console.log(`Resume: ${resumeFilename ?? "not provided"}`);
 
-    console.log("🤖 Asking Gemini to generate a task...");
+    // ── Basic validation — block obvious gibberish/spam ──────────────────
+    const roleClean   = role.trim().toLowerCase();
+    const skillsClean = skills.trim().toLowerCase();
+
+    // Only reject if BOTH: no vowels AND no recognisable tech keyword
+    const hasVowel    = (s: string) => /[aeiou]/i.test(s);
+    const hasTechWord = (s: string) =>
+      /react|node|python|java|php|ruby|swift|kotlin|flutter|angular|vue|next|express|django|spring|sql|css|html|js|ts|aws|gcp|azure|docker|git|api|ui|ux|qa|dev|ops|ml|ai|data|cloud|mobile|backend|frontend|full|stack|software|engineer|developer|designer|manager|analyst|tester|automation|security|cyber|net|c\+\+|golang|rust|scala|figma|sketch|adobe|product/i.test(s);
+
+    // Gibberish = very short AND no tech word, OR pure symbols with no alphanumeric
+    const isGibberish = (s: string) =>
+      (s.length < 2 && !hasTechWord(s)) ||
+      (!hasVowel(s) && !hasTechWord(s) && s.length > 1) ||
+      /^[^a-z0-9\s\.\+\#\/\-]+$/i.test(s);
+
+    if (isGibberish(roleClean)) {
+      return NextResponse.json(
+        { error: "Please enter a valid professional role (e.g. React Developer, UI/UX Designer)." },
+        { status: 422 }
+      );
+    }
+    if (isGibberish(skillsClean)) {
+      return NextResponse.json(
+        { error: "Please enter valid skills (e.g. React, Node.js, Python, Figma)." },
+        { status: 422 }
+      );
+    }
+
+    // ── AI Validation — spam/fake candidate detection ────────────────────
+    // Fail-open: only reject if AI is confident AND the role/skills also look suspicious
+    console.log("🔍 Validating candidate with AI...");
+    const validation = await validateCandidate(applicationData);
+    if (!validation.valid) {
+      // Double-check: if role and skills have recognisable tech words, allow through anyway
+      const roleHasTech  = hasTechWord(roleClean);
+      const skillsHasTech = hasTechWord(skillsClean);
+      if (roleHasTech || skillsHasTech) {
+        console.warn("⚠️ AI rejected but role/skills look valid — allowing through");
+      } else {
+        console.warn(`❌ Candidate rejected: ${validation.error}`);
+        return NextResponse.json({ error: validation.error }, { status: 400 });
+      }
+    } else {
+      console.log(`✅ Candidate valid — category: ${validation.category}, seniority: ${validation.detected_seniority}`);
+    }
+
+    console.log("🤖 Generating task with OpenRouter AI...");
     const task = await generateTask(applicationData);
     console.log("Task generated:", task.title);
 
@@ -589,7 +857,7 @@ export async function POST(req: NextRequest) {
     await sendEmail(applicationData, task, repoUrl);
     console.log("✅ Email sent successfully.");
 
-    // Save to in-memory store for admin panel
+    // Save to in-memory store
     store.add({
       name,
       email,
@@ -598,6 +866,7 @@ export async function POST(req: NextRequest) {
       skills,
       resumeFilename,
       taskTitle: task.title,
+      githubRepo: repoUrl,
       repoOwner,
       repoName,
     });
@@ -610,14 +879,12 @@ export async function POST(req: NextRequest) {
 
   } catch (error: unknown) {
     let errorMessage = "Internal server error";
-    let errorStack = undefined;
     if (error instanceof Error) {
       errorMessage = error.message;
-      errorStack = error.stack;
     } else if (typeof error === "string") {
       errorMessage = error;
     }
     console.error("❌ Error:", error);
-    return NextResponse.json({ error: errorMessage, stack: errorStack }, { status: 500 });
+    return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
 }

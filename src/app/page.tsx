@@ -108,12 +108,6 @@ export default function Home() {
             </div>
             <span className="font-semibold text-gray-900 text-lg">Sensussoft</span>
           </div>
-          <a
-            href="/admin"
-            className="text-sm text-gray-500 hover:text-gray-700 transition-colors"
-          >
-            Admin →
-          </a>
         </div>
       </header>
 

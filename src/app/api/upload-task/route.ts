@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import nodemailer from "nodemailer";
-import Groq from "groq-sdk";
 import { store } from "@/lib/store";
+import { openRouterChat } from "@/lib/openrouter";
 
 export async function POST(req: NextRequest) {
   try {
@@ -115,8 +115,6 @@ async function pushFileToRepo(
 // ── AI analysis ────────────────────────────────────────────────────────────
 async function analyzeFile(filename: string, buffer: Buffer, taskTitle: string): Promise<number> {
   try {
-    const groq = new Groq({ apiKey: process.env.GROQ_API_KEY! });
-
     const textExts = [".js",".ts",".jsx",".tsx",".py",".java",".cs",".go",".rb",".php",".html",".css",".json",".md",".txt",".zip"];
     const ext = filename.slice(filename.lastIndexOf(".")).toLowerCase();
     let contentPreview = "";
@@ -124,8 +122,8 @@ async function analyzeFile(filename: string, buffer: Buffer, taskTitle: string):
       contentPreview = buffer.toString("utf-8").slice(0, 3000);
     }
 
-    const completion = await groq.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
+    const text = await openRouterChat({
+      model: "meta-llama/llama-3.3-70b-instruct",
       messages: [{
         role: "user",
         content: `You are reviewing a candidate's coding task submission.
@@ -141,13 +139,13 @@ Estimate task completion percentage (0-100).
 10-30% = early stage
 0% = empty or unrelated
 
-Return ONLY a number, nothing else.`
+Return ONLY a number, nothing else.`,
       }],
       temperature: 0.2,
       max_tokens: 10,
     });
 
-    const n = parseInt(completion.choices[0]?.message?.content?.trim() ?? "50", 10);
+    const n = parseInt(text.trim() ?? "50", 10);
     return isNaN(n) ? 50 : Math.min(100, Math.max(0, n));
   } catch {
     // Fallback based on file size

@@ -11,12 +11,11 @@ export interface Submission {
   resumeFilename?: string;
   taskTitle?: string;
   submittedAt: string; // ISO string
-  status: "pending" | "reviewed" | "rejected";
-  githubRepo?: string; // GitHub repo URL for tracking
-  repoOwner?: string;  // GitHub repo owner (for file uploads)
-  repoName?: string;   // GitHub repo name (for file uploads)
-  taskProgress?: number; // 0-100 percentage
-  lastUpdated?: string; // Last progress update timestamp
+  githubRepo?: string;
+  repoOwner?: string;
+  repoName?: string;
+  taskProgress?: number;
+  lastUpdated?: string;
 }
 
 // Global store — survives hot reloads in dev via globalThis
@@ -33,23 +32,14 @@ export const store = {
     return globalStore.submissions ?? [];
   },
 
-  add(submission: Omit<Submission, "id" | "submittedAt" | "status">): Submission {
+  add(submission: Omit<Submission, "id" | "submittedAt">): Submission {
     const newEntry: Submission = {
       ...submission,
       id: crypto.randomUUID(),
       submittedAt: new Date().toISOString(),
-      status: "pending",
     };
     globalStore.submissions = [newEntry, ...(globalStore.submissions ?? [])];
     return newEntry;
-  },
-
-  updateStatus(id: string, status: Submission["status"]): boolean {
-    const list = globalStore.submissions ?? [];
-    const idx = list.findIndex((s) => s.id === id);
-    if (idx === -1) return false;
-    list[idx] = { ...list[idx], status };
-    return true;
   },
 
   updateProgress(email: string, progress: number): boolean {
@@ -58,12 +48,5 @@ export const store = {
     if (idx === -1) return false;
     list[idx] = { ...list[idx], taskProgress: progress, lastUpdated: new Date().toISOString() };
     return true;
-  },
-
-  delete(id: string): boolean {
-    const list = globalStore.submissions ?? [];
-    const before = list.length;
-    globalStore.submissions = list.filter((s) => s.id !== id);
-    return globalStore.submissions.length < before;
   },
 };
