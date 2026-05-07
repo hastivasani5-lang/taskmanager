@@ -33,9 +33,9 @@ interface GeneratedTask {
 async function extractResumeText(buffer: Buffer, mimeType: string): Promise<string> {
   try {
     if (mimeType === "application/pdf") {
-      // pdf-parse v2 uses a class-based API: new PDFParse({ data: buffer })
-      const parser = new pdfParseLib.PDFParse({ data: buffer });
-      const result = await parser.getText();
+      // pdf-parse v1 simple API: pdfParse(buffer)
+      const pdfParse = pdfParseLib.default || pdfParseLib;
+      const result = await pdfParse(buffer);
       return result.text.slice(0, 4000);
     }
     if (
