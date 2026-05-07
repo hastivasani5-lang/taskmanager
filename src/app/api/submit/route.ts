@@ -756,9 +756,25 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "All fields are required" }, { status: 400 });
     }
 
-    if (!process.env.OPENROUTER_API_KEY || !process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
+    // Check required env vars with specific error messages
+    if (!process.env.OPENROUTER_API_KEY) {
+      console.error("❌ OPENROUTER_API_KEY not set");
       return NextResponse.json(
-        { error: "Server configuration missing. Check environment variables." },
+        { error: "Server configuration error: OPENROUTER_API_KEY missing" },
+        { status: 500 }
+      );
+    }
+    if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
+      console.error("❌ Gmail credentials not set");
+      return NextResponse.json(
+        { error: "Server configuration error: Gmail credentials missing" },
+        { status: 500 }
+      );
+    }
+    if (!process.env.GITHUB_TOKEN) {
+      console.error("❌ GITHUB_TOKEN not set");
+      return NextResponse.json(
+        { error: "Server configuration error: GITHUB_TOKEN missing" },
         { status: 500 }
       );
     }
