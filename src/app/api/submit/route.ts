@@ -3,7 +3,6 @@ import nodemailer from "nodemailer";
 import PDFDocument from "pdfkit";
 import { store } from "@/lib/store";
 import { openRouterChat } from "@/lib/openrouter";
-import pdfParseLib from "pdf-parse";
 import mammoth from "mammoth";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -33,19 +32,24 @@ interface GeneratedTask {
 async function extractResumeText(buffer: Buffer, mimeType: string): Promise<string> {
   try {
     if (mimeType === "application/pdf") {
-      // pdf-parse v1 simple API: pdfParse(buffer)
-      const result = await pdfParseLib(buffer);
-      return result.text.slice(0, 4000);
+      // Dynamic import avoids Turbopack bundling issues with pdf-parse CJS module
+      const pdfParse = (await import("pdf-parse")).default;
+      const result = await pdfParse(buffer, {
+        // Suppress pdf-parse internal errors for malformed PDFs
+        max: 0,
+      });
+      return result.text.replace(/\s+/g, " ").trim().slice(0, 4000);
     }
     if (
       mimeType === "application/msword" ||
       mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     ) {
       const result = await mammoth.extractRawText({ buffer });
-      return result.value.slice(0, 4000);
+      return result.value.replace(/\s+/g, " ").trim().slice(0, 4000);
     }
   } catch (err) {
     console.warn("⚠️ CV text extraction failed:", err);
+    // Return empty string — validation pipeline will continue with form fields only
   }
   return "";
 }
@@ -214,6 +218,67 @@ Return ONLY valid JSON, no markdown, no explanation.`;
     // If validation itself fails, log and allow through (fail-open)
     console.warn("⚠️ Validation AI call failed, allowing through:", err);
     return { valid: true, category: "development", detected_seniority: "mid", summary: "Validation skipped" };
+  }
+}
+
+// ── CV Content Validation — strict check ──────────────────────────────────
+async function validateResumeContent(resumeText: string, role: string, skills: string): Promise<{ valid: boolean; error?: string }> {
+  if (!resumeText || resumeText.length < 100) {
+    return { valid: false, error: "Resume file appears to be empty or too short. Please upload a proper CV/resume." };
+  }
+
+  const prompt = `You are validating a resume/CV file for a job application.
+
+Candidate's stated role: ${role}
+Candidate's stated skills: ${skills}
+
+Resume content (extracted):
+"""
+${resumeText.slice(0, 2500)}
+"""
+
+Your task: Determine if this is a REAL professional resume/CV or NOT.
+
+A REAL resume contains:
+- Work experience, job titles, or project descriptions
+- Education details (degree, university, etc.)
+- Technical skills or professional competencies
+- Contact information or professional summary
+- Dates, company names, or achievements
+
+NOT a real resume if it contains:
+- Only a name and contact info (no experience/education)
+- Random text, lorem ipsum, or placeholder content
+- Completely unrelated content (e.g., a recipe, a story, random notes)
+- Just a list of words with no context
+- Blank or nearly empty document
+
+IMPORTANT:
+- If the resume is in a different language but has professional structure → VALID
+- If the resume is poorly formatted but has real work experience → VALID
+- If the resume is short but has at least 1-2 real job/project entries → VALID
+- Only reject if it's clearly NOT a resume at all
+
+Return ONLY JSON:
+{"valid": true}  — if this is a real resume
+{"valid": false, "error": "This does not appear to be a professional resume. Please upload your actual CV."}  — if not a resume
+
+Return ONLY raw JSON, no markdown.`;
+
+  try {
+    let text = await openRouterChat({
+      model: "meta-llama/llama-3.3-70b-instruct",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.2,
+      max_tokens: 100,
+    });
+
+    text = text.replace(/```json|```/g, "").trim();
+    const result = JSON.parse(text) as { valid: boolean; error?: string };
+    return result;
+  } catch (err) {
+    console.warn("⚠️ Resume validation AI call failed, allowing through:", err);
+    return { valid: true }; // fail-open
   }
 }
 
@@ -834,7 +899,7 @@ export async function POST(req: NextRequest) {
     const validation = await validateCandidate(applicationData);
     if (!validation.valid) {
       // Double-check: if role and skills have recognisable tech words, allow through anyway
-      const roleHasTech  = hasTechWord(roleClean);
+      const roleHasTech   = hasTechWord(roleClean);
       const skillsHasTech = hasTechWord(skillsClean);
       if (roleHasTech || skillsHasTech) {
         console.warn("⚠️ AI rejected but role/skills look valid — allowing through");
@@ -844,6 +909,20 @@ export async function POST(req: NextRequest) {
       }
     } else {
       console.log(`✅ Candidate valid — category: ${validation.category}, seniority: ${validation.detected_seniority}`);
+    }
+
+    // ── Resume Content Validation — must be a real CV ─────────────────────
+    if (resumeText && resumeText.length >= 100) {
+      console.log("📋 Validating resume content...");
+      const resumeCheck = await validateResumeContent(resumeText, role, skills);
+      if (!resumeCheck.valid) {
+        console.warn(`❌ Resume rejected: ${resumeCheck.error}`);
+        return NextResponse.json({ error: resumeCheck.error }, { status: 400 });
+      }
+      console.log("✅ Resume content validated — looks like a real CV");
+    } else if (resumeBuffer && !resumeText) {
+      // PDF uploaded but text extraction failed (scanned/image PDF) — allow through
+      console.warn("⚠️ Could not extract text from resume — continuing with form fields only");
     }
 
     console.log("🤖 Generating task with OpenRouter AI...");
