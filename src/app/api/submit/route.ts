@@ -3,7 +3,7 @@ import nodemailer from "nodemailer";
 import PDFDocument from "pdfkit";
 import { store } from "@/lib/store";
 import { openRouterChat } from "@/lib/openrouter";
-import * as pdfParseLib from "pdf-parse";
+import pdfParseLib from "pdf-parse";
 import mammoth from "mammoth";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -34,8 +34,7 @@ async function extractResumeText(buffer: Buffer, mimeType: string): Promise<stri
   try {
     if (mimeType === "application/pdf") {
       // pdf-parse v1 simple API: pdfParse(buffer)
-      const pdfParse = pdfParseLib.default || pdfParseLib;
-      const result = await pdfParse(buffer);
+      const result = await pdfParseLib(buffer);
       return result.text.slice(0, 4000);
     }
     if (
