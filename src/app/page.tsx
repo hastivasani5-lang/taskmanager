@@ -1,6 +1,16 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
+
+// ── Valid IT role keywords (client-side quick check) ──────────────────────
+const TECH_KEYWORDS =
+  /react|node|python|java|php|ruby|swift|kotlin|flutter|angular|vue|next|express|django|spring|sql|css|html|javascript|typescript|aws|gcp|azure|docker|git|api|ui|ux|qa|devops|sre|cloud|mobile|backend|frontend|fullstack|full.stack|software|engineer|developer|designer|manager|analyst|tester|automation|security|figma|product|data|ml|ai|golang|rust|scala|kotlin|android|ios/i;
+
+function isRoleValid(role: string): boolean {
+  const r = role.trim();
+  if (r.length < 3) return false;
+  return TECH_KEYWORDS.test(r);
+}
 
 export default function Home() {
   const [formData, setFormData] = useState({
@@ -10,17 +20,50 @@ export default function Home() {
     experience: "",
     skills: "",
   });
-  const [resumeFile, setResumeFile] = useState<File | null>(null);
+  const [resumeFile, setResumeFile]   = useState<File | null>(null);
   const [resumeError, setResumeError] = useState("");
-  const [dragOver, setDragOver] = useState(false);
-  const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
-  const [message, setMessage] = useState("");
+  const [dragOver, setDragOver]       = useState(false);
+  const [status, setStatus]           = useState<"idle" | "loading" | "success" | "error">("idle");
+  const [message, setMessage]         = useState("");
+
+  // Role validation state
+  const [roleError, setRoleError]     = useState("");
+  const [roleTouched, setRoleTouched] = useState(false);
+  const roleDebounceRef               = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // ── Debounced role validation on every keystroke ──────────────────────
+  useEffect(() => {
+    if (!roleTouched) return;
+    if (roleDebounceRef.current) clearTimeout(roleDebounceRef.current);
+
+    roleDebounceRef.current = setTimeout(() => {
+      const r = formData.role.trim();
+      if (r.length === 0) {
+        setRoleError("");
+        return;
+      }
+      if (!isRoleValid(r)) {
+        setRoleError(
+          "Please enter a valid IT/software role (e.g. React Developer, UI/UX Designer, QA Engineer)."
+        );
+      } else {
+        setRoleError("");
+      }
+    }, 600); // 600ms debounce
+
+    return () => {
+      if (roleDebounceRef.current) clearTimeout(roleDebounceRef.current);
+    };
+  }, [formData.role, roleTouched]);
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
   ) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
+    const { name, value } = e.target;
+    setFormData((prev) => ({ ...prev, [name]: value }));
+    if (name === "role") setRoleTouched(true);
   };
 
   const validateFile = (file: File): boolean => {
@@ -57,27 +100,34 @@ export default function Home() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Block submit if role is invalid
+    setRoleTouched(true);
+    if (!isRoleValid(formData.role)) {
+      setRoleError(
+        "Please enter a valid IT/software role (e.g. React Developer, UI/UX Designer, QA Engineer)."
+      );
+      return;
+    }
+
     if (!resumeFile) {
       setResumeError("Please upload your resume.");
       return;
     }
+
     setStatus("loading");
     setMessage("");
 
     try {
       const payload = new FormData();
-      payload.append("name", formData.name);
-      payload.append("email", formData.email);
-      payload.append("role", formData.role);
+      payload.append("name",       formData.name);
+      payload.append("email",      formData.email);
+      payload.append("role",       formData.role);
       payload.append("experience", formData.experience);
-      payload.append("skills", formData.skills);
-      payload.append("resume", resumeFile);
+      payload.append("skills",     formData.skills);
+      payload.append("resume",     resumeFile);
 
-      const res = await fetch("/api/submit", {
-        method: "POST",
-        body: payload,
-      });
-
+      const res  = await fetch("/api/submit", { method: "POST", body: payload });
       const data = await res.json();
 
       if (res.ok) {
@@ -85,6 +135,8 @@ export default function Home() {
         setMessage(`Application submitted! Your task has been sent to ${formData.email}.`);
         setFormData({ name: "", email: "", role: "", experience: "", skills: "" });
         setResumeFile(null);
+        setRoleTouched(false);
+        setRoleError("");
         if (fileInputRef.current) fileInputRef.current.value = "";
       } else {
         setStatus("error");
@@ -95,6 +147,14 @@ export default function Home() {
       setMessage("Network error. Please try again.");
     }
   };
+
+  // Role field border color
+  const roleBorderClass =
+    roleError
+      ? "border-red-400 focus:ring-red-400"
+      : formData.role && !roleError && roleTouched
+      ? "border-green-400 focus:ring-green-400"
+      : "border-gray-300 focus:ring-pink-500";
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
@@ -119,7 +179,7 @@ export default function Home() {
           <div className="mb-8">
             <h1 className="text-2xl font-bold text-gray-900">Job Application</h1>
             <p className="text-gray-500 mt-1 text-sm">
-              Fill in your details and we&apos;ll send a custom coding task to your inbox.
+              Fill in your details and we&apos;ll send a custom task to your inbox.
             </p>
           </div>
 
@@ -142,8 +202,6 @@ export default function Home() {
             </div>
           ) : (
             <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-
-              {/* Form */}
               <form onSubmit={handleSubmit} className="p-8 space-y-6">
 
                 {/* Row 1: Name + Email */}
@@ -178,20 +236,63 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* Role */}
+                {/* Role — with real-time validation */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1.5">
                     Role Applying For <span className="text-red-500">*</span>
                   </label>
-                  <input
-                    type="text"
-                    name="role"
-                    value={formData.role}
-                    onChange={handleChange}
-                    required
-                    placeholder="e.g. Junior React Developer"
-                    className="w-full border border-gray-300 rounded-lg px-3.5 py-2.5 text-gray-900 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-transparent transition-all"
-                  />
+                  <div className="relative">
+                    <input
+                      type="text"
+                      name="role"
+                      value={formData.role}
+                      onChange={handleChange}
+                      onBlur={() => setRoleTouched(true)}
+                      required
+                      placeholder="e.g. Junior React Developer, UI/UX Designer, QA Engineer"
+                      className={`w-full border rounded-lg px-3.5 py-2.5 text-gray-900 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:border-transparent transition-all pr-9 ${roleBorderClass}`}
+                    />
+                    {/* Inline status icon */}
+                    {roleTouched && formData.role.length > 0 && (
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2">
+                        {roleError ? (
+                          <svg className="w-4 h-4 text-red-500" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                          </svg>
+                        ) : (
+                          <svg className="w-4 h-4 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                          </svg>
+                        )}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Role error alert */}
+                  {roleError && (
+                    <div className="mt-2 flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2.5">
+                      <svg className="w-4 h-4 text-red-500 mt-0.5 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                      </svg>
+                      <div>
+                        <p className="text-xs font-semibold text-red-700">Invalid Role</p>
+                        <p className="text-xs text-red-600 mt-0.5">{roleError}</p>
+                        <p className="text-xs text-red-500 mt-1">
+                          Valid examples: <span className="font-medium">React Developer · UI/UX Designer · QA Engineer · DevOps Engineer · Product Manager</span>
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Role valid hint */}
+                  {!roleError && roleTouched && formData.role.length > 0 && (
+                    <p className="text-xs text-green-600 mt-1.5 flex items-center gap-1">
+                      <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                      </svg>
+                      Role looks good — AI will analyse and generate a matching task
+                    </p>
+                  )}
                 </div>
 
                 {/* Experience */}
@@ -258,7 +359,7 @@ export default function Home() {
                     />
                     {resumeFile ? (
                       <div className="flex items-center justify-center gap-3">
-                        <svg className="w-5 h-5 text-green-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <svg className="w-5 h-5 text-green-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                         </svg>
                         <div className="text-left">
@@ -304,21 +405,21 @@ export default function Home() {
                   )}
                 </div>
 
-                {/* Error message */}
+                {/* Submit error */}
                 {status === "error" && message && (
                   <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-600 flex items-start gap-2">
-                    <svg className="w-4 h-4 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                    <svg className="w-4 h-4 mt-0.5 shrink-0" fill="currentColor" viewBox="0 0 20 20">
                       <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
                     </svg>
                     {message}
                   </div>
                 )}
 
-                {/* Divider */}
+                {/* Submit button */}
                 <div className="border-t border-gray-100 pt-2">
                   <button
                     type="submit"
-                    disabled={status === "loading"}
+                    disabled={status === "loading" || !!roleError}
                     className="w-full bg-pink-600 hover:bg-pink-700 disabled:bg-pink-300 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-lg text-sm transition-colors"
                   >
                     {status === "loading" ? (
@@ -327,7 +428,7 @@ export default function Home() {
                           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
                         </svg>
-                        Submitting...
+                        Analysing your profile &amp; generating task...
                       </span>
                     ) : (
                       "Submit Application"
@@ -340,7 +441,7 @@ export default function Home() {
           )}
 
           <p className="text-center text-xs text-gray-400 mt-6">
-            Your data is used only to generate a personalised coding task.
+            Your data is used only to generate a personalised task.
           </p>
         </div>
       </main>
